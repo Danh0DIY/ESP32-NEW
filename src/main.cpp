@@ -1,64 +1,92 @@
 #include <TFT_eSPI.h>
-#include <TJpg_Decoder.h>
+#include "FlappyBird.h"
+#include "video_player.h"
 
-typedef struct _VideoInfo {
-    const uint8_t* const* frames;     
-    const uint16_t* frames_size;      
-    uint16_t num_frames;              
-} VideoInfo;
+TFT_eSPI tft;
+FlappyBird game(tft, 23); // 0 = chạm nút nhảy (giữ nguyên từ code gốc)
 
-// ======= INCLUDE tất cả video .h =======
-#include "video01.h"
-#include "video02.h"
-#include "video03.h"
-#include "video04.h"
+const int SELECT_PIN = 13; // Chân để tùy chọn (toggle giữa các lựa chọn)
+const int ENTER_PIN = 15;  // Chân để chọn và thoát
 
-// ======= Tự động tạo mảng videoList =======
-VideoInfo* videoList[] = {
-    &video01, &video02, &video03, &video04
-};
+enum State { MENU, GAME, VIDEO };
+State currentState = MENU;
 
-const uint8_t NUM_VIDEOS = sizeof(videoList) / sizeof(videoList[0]);
-
-TFT_eSPI tft = TFT_eSPI();
-
-// Callback vẽ ảnh (kiểu dữ liệu đã sửa chuẩn với TJpg_Decoder)
-bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-    if (x >= tft.width() || y >= tft.height()) return true;  
-    tft.pushImage(x, y, w, h, bitmap);
-    return true;
-}
-
-// Vẽ 1 frame
-void drawJPEGFrame(const VideoInfo* video, uint16_t frameIndex) {
-    uint8_t* jpg_data = (uint8_t*)pgm_read_ptr(&video->frames[frameIndex]);
-    uint16_t jpg_size = pgm_read_word(&video->frames_size[frameIndex]);
-
-    if (!TJpgDec.drawJpg(0, 0, jpg_data, jpg_size)) {
-        Serial.printf("❌ Decode failed on frame %d\n", frameIndex);
-    }
-}
+int menuSelection = 0; // 0: Play Video, 1: Play Game
 
 void setup() {
-    Serial.begin(115200);
-    tft.begin();
-    tft.setRotation(3);
-    tft.fillScreen(TFT_BLACK);
-
-    TJpgDec.setJpgScale(1);
-    TJpgDec.setSwapBytes(true);
-    TJpgDec.setCallback(tft_output);
+  Serial.begin(115200);
+  tft.init();
+  tft.setRotation(0);
+  tft.fillScreen(TFT_BLACK);
+  
+  pinMode(SELECT_PIN, INPUT_PULLUP);
+  pinMode(ENTER_PIN, INPUT_PULLUP);
+  
+  drawMenu();
 }
 
 void loop() {
-    if (NUM_VIDEOS == 0) return;
+  if (currentState == MENU) {
+    handleMenu();
+  } else if (currentState == GAME) {
+    game.update();
+    checkExit();
+  } else if (currentState == VIDEO) {
+    playVideos();
+    checkExit();
+  }
+}
 
-    for (uint8_t v = 0; v < NUM_VIDEOS; v++) {
-        VideoInfo* currentVideo = videoList[v];
-        for (uint16_t f = 0; f < currentVideo->num_frames; f++) {
-            drawJPEGFrame(currentVideo, f);
-            delay(30); // Delay giữa các frame
-        }
-        delay(300); // Delay giữa các video
+void drawMenu() {
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.drawString("Menu:", 10, 10);
+  tft.drawString("1. Play Video", 10, 40);
+  tft.drawString("2. Play Game", 10, 70);
+  highlightSelection();
+}
+
+void highlightSelection() {
+  // Xóa highlight cũ
+  tft.fillRect(0, 40, 5, 60, TFT_BLACK);
+  if (menuSelection == 0) {
+    tft.fillRect(0, 40, 5, 30, TFT_RED); // Highlight cho Video
+  } else {
+    tft.fillRect(0, 70, 5, 30, TFT_RED); // Highlight cho Game
+  }
+}
+
+void handleMenu() {
+  static unsigned long lastDebounce = 0;
+  if (millis() - lastDebounce > 200) { // Debounce 200ms
+    if (digitalRead(SELECT_PIN) == LOW) {
+      menuSelection = 1 - menuSelection; // Toggle giữa 0 và 1
+      highlightSelection();
+      lastDebounce = millis();
     }
+    if (digitalRead(ENTER_PIN) == LOW) {
+      lastDebounce = millis();
+      if (menuSelection == 0) {
+        currentState = VIDEO;
+        tft.fillScreen(TFT_BLACK); // Xóa màn hình trước khi vào video
+        // Nếu cần init video, thêm ở đây
+      } else {
+        currentState = GAME;
+        tft.fillScreen(TFT_BLACK); // Xóa màn hình trước khi vào game
+        game.begin();
+      }
+    }
+  }
+}
+
+void checkExit() {
+  static unsigned long lastDebounce = 0;
+  if (millis() - lastDebounce > 200) {
+    if (digitalRead(ENTER_PIN) == LOW) {
+      currentState = MENU;
+      tft.fillScreen(TFT_BLACK);
+      drawMenu();
+      lastDebounce = millis();
+    }
+  }
 }
