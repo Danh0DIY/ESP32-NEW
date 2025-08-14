@@ -2,6 +2,12 @@
 #include "FlappyBird.h"
 #include "video_player.h"
 
+// Forward declarations (khai báo trước để tránh lỗi undeclared)
+void drawMenu();
+void highlightSelection();
+void handleMenu();
+void checkExit();
+
 TFT_eSPI tft;
 FlappyBird game(tft, 23); // 0 = chạm nút nhảy (giữ nguyên từ code gốc)
 
