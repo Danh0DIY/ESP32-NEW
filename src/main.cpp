@@ -33,7 +33,7 @@ TFT_eSprite sprPipe = TFT_eSprite(&tft);
 TFT_eSprite sprGround = TFT_eSprite(&tft);
 
 unsigned long lastFrame = 0;
-const int FRAME_TIME = 12; // ~80 FPS
+const int FRAME_TIME = 25; // ~80 FPS
 
 // ===== Vẽ chim (nhiều màu) =====
 void createBirdSprite() {
