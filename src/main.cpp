@@ -1,98 +1,262 @@
+#ifndef GAME_MENU_H
+#define GAME_MENU_H
+
 #include <TFT_eSPI.h>
-#include "FlappyBird.h"
-#include "video_player.h"
+#include <TJpg_Decoder.h>
+#include <SPI.h>
 
-// Forward declarations (khai báo trước để tránh lỗi undeclared)
-void drawMenu();
-void highlightSelection();
-void handleMenu();
-void checkExit();
+// ====== Khai báo cấu trúc video ======
+typedef struct _VideoInfo {
+    const uint8_t* const* frames;
+    const uint16_t* frames_size;
+    uint16_t num_frames;
+} VideoInfo;
 
-TFT_eSPI tft;
-FlappyBird game(tft, 23); // 0 = chạm nút nhảy (giữ nguyên từ code gốc)
+// ====== INCLUDE tất cả video .h ======
+#include "video01.h"
+#include "video02.h"
+#include "video03.h"
+#include "video04.h"
 
-const int SELECT_PIN = 13; // Chân để tùy chọn (toggle giữa các lựa chọn)
-const int ENTER_PIN = 15;  // Chân để chọn và thoát
+// ====== Mảng video ======
+VideoInfo* videoList[] = {
+    &video01, &video02, &video03, &video04
+};
+const uint8_t NUM_VIDEOS = sizeof(videoList) / sizeof(videoList[0]);
 
-enum State { MENU, GAME, VIDEO };
-State currentState = MENU;
+class GameMenu {
+private:
+    TFT_eSPI &tft;
+    int btnPin;
+    enum State { MENU, FLAPPY_BIRD, VIDEO_PLAYER };
+    State currentState = MENU;
+    int menuSelection = 0; // 0: Flappy Bird, 1: Video Player
+    unsigned long lastButtonPress = 0;
+    const unsigned long DEBOUNCE_DELAY = 200;
 
-int menuSelection = 0; // 0: Play Video, 1: Play Game
+    // Flappy Bird variables
+    const int SCREEN_W = 80;
+    const int SCREEN_H = 160;
+    int birdX = 20;
+    int birdY = 80;
+    int birdSize = 8;
+    float velocity = 0;
+    float gravity = 0.4;
+    float jumpStrength = -4.5;
+    int pipeX = SCREEN_W;
+    int pipeGap = 45;
+    int pipeWidth = 15;
+    int pipeTopHeight;
+    bool gameOver = false;
+    int score = 0;
+    int highScore = 0;
+    int oldBirdY = birdY, oldPipeX = pipeX;
 
-void setup() {
-  Serial.begin(115200);
-  tft.init();
-  tft.setRotation(0);
-  tft.fillScreen(TFT_BLACK);
-  
-  pinMode(SELECT_PIN, INPUT_PULLUP);
-  pinMode(ENTER_PIN, INPUT_PULLUP);
-  
-  drawMenu();
-}
+    const uint16_t birdSprite[8*8] = {
+        0xFFFF,0xFFFF,0xFFE0,0xFFE0,0xFFE0,0xFFFF,0xFFFF,0xFFFF,
+        0xFFFF,0xFFE0,0xFFE0,0xFFE0,0xFFE0,0xFFE0,0xFFFF,0xFFFF,
+        0xFFFF,0xFFE0,0xFFFF,0xFFFF,0xFFFF,0xFFE0,0xFFE0,0xFFFF,
+        0xFFFF,0xFFE0,0xFFFF,0x0000,0xFFFF,0xFD20,0xFFE0,0xFFFF,
+        0xFFFF,0xFFE0,0xFFFF,0xFFFF,0xFFFF,0xFFE0,0xFFE0,0xFFFF,
+        0xFFFF,0xFFE0,0xFFE0,0xFFE0,0xFFE0,0xFFE0,0xFFFF,0xFFFF,
+        0xFFFF,0xFFFF,0xFFE0,0xFFE0,0xFFE0,0xFFFF,0xFFFF,0xFFFF,
+        0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF
+    };
 
-void loop() {
-  if (currentState == MENU) {
-    handleMenu();
-  } else if (currentState == GAME) {
-    game.update();
-    checkExit();
-  } else if (currentState == VIDEO) {
-    playVideos();
-    checkExit();
-  }
-}
+    // Video Player variables
+    uint8_t currentVideoIndex = 0;
+    uint16_t currentFrame = 0;
+    bool isPlaying = true;
 
-void drawMenu() {
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setTextSize(2);
-  tft.drawString("Menu:", 10, 10);
-  tft.drawString("1. Play Video", 10, 40);
-  tft.drawString("2. Play Game", 10, 70);
-  highlightSelection();
-}
+public:
+    GameMenu(TFT_eSPI &display, int buttonPin) : tft(display), btnPin(buttonPin) {}
 
-void highlightSelection() {
-  // Xóa highlight cũ
-  tft.fillRect(0, 40, 5, 60, TFT_BLACK);
-  if (menuSelection == 0) {
-    tft.fillRect(0, 40, 5, 30, TFT_RED); // Highlight cho Video
-  } else {
-    tft.fillRect(0, 70, 5, 30, TFT_RED); // Highlight cho Game
-  }
-}
-
-void handleMenu() {
-  static unsigned long lastDebounce = 0;
-  if (millis() - lastDebounce > 200) { // Debounce 200ms
-    if (digitalRead(SELECT_PIN) == LOW) {
-      menuSelection = 1 - menuSelection; // Toggle giữa 0 và 1
-      highlightSelection();
-      lastDebounce = millis();
+    void begin() {
+        pinMode(btnPin, INPUT_PULLUP);
+        tft.begin();
+        tft.setRotation(3);
+        tft.fillScreen(TFT_BLACK);
+        TJpgDec.setJpgScale(1);
+        TJpgDec.setSwapBytes(true);
+        TJpgDec.setCallback(tft_output);
+        drawMenu();
     }
-    if (digitalRead(ENTER_PIN) == LOW) {
-      lastDebounce = millis();
-      if (menuSelection == 0) {
-        currentState = VIDEO;
-        tft.fillScreen(TFT_BLACK); // Xóa màn hình trước khi vào video
-        // Nếu cần init video, thêm ở đây
-      } else {
-        currentState = GAME;
-        tft.fillScreen(TFT_BLACK); // Xóa màn hình trước khi vào game
-        game.begin();
-      }
-    }
-  }
-}
 
-void checkExit() {
-  static unsigned long lastDebounce = 0;
-  if (millis() - lastDebounce > 200) {
-    if (digitalRead(ENTER_PIN) == LOW) {
-      currentState = MENU;
-      tft.fillScreen(TFT_BLACK);
-      drawMenu();
-      lastDebounce = millis();
+    static bool tft_output(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t* bitmap) {
+        if (x >= TFT_WIDTH || y >= TFT_HEIGHT) return true;
+        TFT_eSPI* tft = TJpgDec.getTft();
+        tft->pushImage(x, y, w, h, bitmap);
+        return true;
     }
-  }
-}
+
+    void update() {
+        unsigned long currentTime = millis();
+        bool buttonPressed = digitalRead(btnPin) == LOW && (currentTime - lastButtonPress > DEBOUNCE_DELAY);
+
+        switch (currentState) {
+            case MENU:
+                handleMenu(buttonPressed);
+                break;
+            case FLAPPY_BIRD:
+                handleFlappyBird(buttonPressed);
+                break;
+            case VIDEO_PLAYER:
+                handleVideoPlayer(buttonPressed);
+                break;
+        }
+
+        if (buttonPressed) {
+            lastButtonPress = currentTime;
+        }
+    }
+
+private:
+    void drawMenu() {
+        tft.fillScreen(TFT_BLACK);
+        tft.setTextColor(TFT_WHITE);
+        tft.setTextSize(2);
+        tft.setCursor(10, 20);
+        tft.print(menuSelection == 0 ? "> Flappy Bird" : "  Flappy Bird");
+        tft.setCursor(10, 40);
+        tft.print(menuSelection == 1 ? "> Video Player" : "  Video Player");
+    }
+
+    void handleMenu(bool buttonPressed) {
+        if (buttonPressed) {
+            if (menuSelection == 0) {
+                currentState = FLAPPY_BIRD;
+                resetGame();
+            } else {
+                currentState = VIDEO_PLAYER;
+                currentVideoIndex = 0;
+                currentFrame = 0;
+                isPlaying = true;
+            }
+        } else if (digitalRead(btnPin) == LOW && (millis() - lastButtonPress > 1000)) {
+            // Giữ nút lâu để chuyển đổi lựa chọn
+            menuSelection = (menuSelection + 1) % 2;
+            drawMenu();
+            lastButtonPress = millis();
+        }
+    }
+
+    void resetGame() {
+        birdY = SCREEN_H / 2;
+        velocity = 0;
+        pipeX = SCREEN_W;
+        pipeTopHeight = random(20, SCREEN_H - pipeGap - 20);
+        score = 0;
+        gameOver = false;
+        tft.fillScreen(TFT_CYAN);
+        drawGround();
+    }
+
+    void drawSprite(int x, int y) {
+        tft.pushImage(x, y, birdSize, birdSize, birdSprite);
+    }
+
+    void drawPipe(int x, int topH, uint16_t color) {
+        tft.fillRect(x, 0, pipeWidth, topH, color);
+        tft.drawRect(x, 0, pipeWidth, topH, TFT_DARKGREEN);
+        tft.fillRect(x, topH + pipeGap, pipeWidth, SCREEN_H - (topH + pipeGap) - 16, color);
+        tft.drawRect(x, topH + pipeGap, pipeWidth, SCREEN_H - (topH + pipeGap) - 16, TFT_DARKGREEN);
+    }
+
+    void drawGround() {
+        tft.fillRect(0, SCREEN_H - 16, SCREEN_W, 16, TFT_BROWN);
+        tft.fillRect(0, SCREEN_H - 20, SCREEN_W, 4, TFT_GREEN);
+    }
+
+    void handleFlappyBird(bool buttonPressed) {
+        if (buttonPressed && (millis() - lastButtonPress > 1000)) {
+            // Giữ nút lâu để thoát về menu
+            currentState = MENU;
+            drawMenu();
+            return;
+        }
+
+        if (!gameOver) {
+            tft.fillRect(birdX, oldBirdY, birdSize, birdSize, TFT_CYAN);
+            drawPipe(oldPipeX, pipeTopHeight, TFT_CYAN);
+            drawGround();
+
+            if (buttonPressed) velocity = jumpStrength;
+
+            oldBirdY = birdY;
+            velocity += gravity;
+            birdY += velocity;
+
+            oldPipeX = pipeX;
+            pipeX -= 2;
+            if (pipeX + pipeWidth < 0) {
+                pipeX = SCREEN_W;
+                pipeTopHeight = random(20, SCREEN_H - pipeGap - 20);
+                score++;
+            }
+
+            drawSprite(birdX, birdY);
+            drawPipe(pipeX, pipeTopHeight, TFT_GREEN);
+            drawGround();
+
+            tft.setTextColor(TFT_WHITE, TFT_CYAN);
+            tft.setTextSize(2);
+            tft.setCursor(5, 5);
+            tft.print(score);
+
+            if (birdY < 0 || birdY + birdSize > SCREEN_H - 16 ||
+                (birdX + birdSize > pipeX && birdX < pipeX + pipeWidth &&
+                 (birdY < pipeTopHeight || birdY + birdSize > pipeTopHeight + pipeGap))) {
+                gameOver = true;
+                highScore = max(highScore, score);
+            }
+        } else {
+            tft.setTextColor(TFT_RED, TFT_CYAN);
+            tft.setTextSize(2);
+            tft.setCursor(5, SCREEN_H / 2 - 10);
+            tft.print("GAME OVER");
+            tft.setCursor(5, SCREEN_H / 2 + 10);
+            tft.print("Score: ");
+            tft.print(score);
+            tft.setCursor(5, SCREEN_H / 2 + 30);
+            tft.print("High: ");
+            tft.print(highScore);
+
+            if (buttonPressed) resetGame();
+        }
+    }
+
+    void drawJPEGFrame(const VideoInfo* video, uint16_t frameIndex) {
+        uint8_t* jpg_data = (uint8_t*)pgm_read_ptr(&video->frames[frameIndex]);
+        uint16_t jpg_size = pgm_read_word(&video->frames_size[frameIndex]);
+
+        if (!TJpgDec.drawJpg(0, 0, jpg_data, jpg_size)) {
+            Serial.printf("❌ Decode failed on frame %d\n", frameIndex);
+        }
+    }
+
+    void handleVideoPlayer(bool buttonPressed) {
+        if (buttonPressed && (millis() - lastButtonPress > 1000)) {
+            // Giữ nút lâu để thoát về menu
+            currentState = MENU;
+            drawMenu();
+            return;
+        }
+
+        if (isPlaying && currentVideoIndex < NUM_VIDEOS) {
+            VideoInfo* currentVideo = videoList[currentVideoIndex];
+            drawJPEGFrame(currentVideo, currentFrame);
+            currentFrame++;
+            if (currentFrame >= currentVideo->num_frames) {
+                currentFrame = 0;
+                currentVideoIndex++;
+                delay(300);
+            }
+            if (currentVideoIndex >= NUM_VIDEOS) {
+                currentState = MENU;
+                drawMenu();
+            }
+        }
+    }
+};
+
+#endif
