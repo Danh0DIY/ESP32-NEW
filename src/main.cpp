@@ -11,7 +11,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define PIPE_W   20
 #define GAP_H    30
 #define GRAVITY  0.18
-#define JUMP_VEL -2.5
+#define JUMP_VEL -2.1
 
 // Bird
 float birdY = 25, birdVel = 0;
