@@ -1,11 +1,11 @@
 #include <Arduino.h>
-#include <TFT_eSPI.h> // Thư viện đã cấu hình chân trong User_Setup.h
+#include <TFT_eSPI.h> // Đã cấu hình chân trong User_Setup.h
 
 #define BTN_JUMP 23 // Nút nhảy
 
 TFT_eSPI tft = TFT_eSPI();
 
-// ==== Cấu hình game ====
+// ==== Game config ====
 #define SCREEN_W 160
 #define SCREEN_H 80
 #define GROUND_H 10
@@ -25,20 +25,40 @@ int pipeGapY = 30;
 
 // Score
 int score = 0;
-
-// Timing
-unsigned long lastFrame = 0;
-const int FRAME_TIME = 16; // ~60 FPS
-
 bool gameOver = false;
 
-void drawBird(int x, int y, uint16_t color) {
-  tft.fillRect(x, y, 6, 6, color);
+// Sprite
+TFT_eSprite sprBird = TFT_eSprite(&tft);
+TFT_eSprite sprPipe = TFT_eSprite(&tft);
+TFT_eSprite sprGround = TFT_eSprite(&tft);
+
+unsigned long lastFrame = 0;
+const int FRAME_TIME = 12; // ~80 FPS
+
+// ===== Vẽ chim (nhiều màu) =====
+void createBirdSprite() {
+  sprBird.createSprite(8, 8);
+  sprBird.fillSprite(TFT_TRANSPARENT);
+  sprBird.fillCircle(4, 4, 4, TFT_YELLOW);  // Thân
+  sprBird.fillCircle(2, 3, 1, TFT_BLACK);   // Mắt
+  sprBird.fillRect(6, 4, 2, 2, TFT_ORANGE); // Mỏ
 }
 
-void drawPipe(int x, int gapY, uint16_t color) {
-  tft.fillRect(x, 0, PIPE_W, gapY, color); // Trên
-  tft.fillRect(x, gapY + GAP_H, PIPE_W, SCREEN_H - (gapY + GAP_H + GROUND_H), color); // Dưới
+// ===== Vẽ ống =====
+void createPipeSprite() {
+  sprPipe.createSprite(PIPE_W, SCREEN_H);
+  sprPipe.fillSprite(TFT_TRANSPARENT);
+  sprPipe.fillRect(0, 0, PIPE_W, SCREEN_H, TFT_GREEN);
+  sprPipe.drawRect(0, 0, PIPE_W, SCREEN_H, TFT_DARKGREEN);
+}
+
+// ===== Vẽ nền đất =====
+void createGroundSprite() {
+  sprGround.createSprite(SCREEN_W, GROUND_H);
+  sprGround.fillSprite(TFT_BROWN);
+  for (int i = 0; i < SCREEN_W; i += 4) {
+    sprGround.fillRect(i, GROUND_H - 2, 2, 2, TFT_DARKGREY);
+  }
 }
 
 void resetGame() {
@@ -56,6 +76,11 @@ void setup() {
   tft.setRotation(1);
   tft.fillScreen(TFT_CYAN);
   randomSeed(analogRead(0));
+
+  // Tạo sprite
+  createBirdSprite();
+  createPipeSprite();
+  createGroundSprite();
 
   tft.setTextColor(TFT_BLACK);
   tft.setTextSize(1);
@@ -91,9 +116,9 @@ void loop() {
     }
 
     // Va chạm
-    if (birdY <= 0 || birdY + 6 >= SCREEN_H - GROUND_H ||
-        (birdX + 6 > pipeX && birdX < pipeX + PIPE_W &&
-         (birdY < pipeGapY || birdY + 6 > pipeGapY + GAP_H))) {
+    if (birdY <= 0 || birdY + 8 >= SCREEN_H - GROUND_H ||
+        (birdX + 8 > pipeX && birdX < pipeX + PIPE_W &&
+         (birdY < pipeGapY || birdY + 8 > pipeGapY + GAP_H))) {
       gameOver = true;
     }
   } else {
@@ -102,19 +127,34 @@ void loop() {
     }
   }
 
-  // ===== Draw =====
-  tft.fillScreen(TFT_CYAN); // nền trời
-  drawPipe(pipeX, pipeGapY, TFT_GREEN);
-  drawBird(birdX, birdY, TFT_YELLOW);
-  tft.fillRect(0, SCREEN_H - GROUND_H, SCREEN_W, GROUND_H, TFT_BROWN);
+  // ===== Draw Partial Redraw =====
+  // Vẽ nền trời khu vực ống và chim
+  tft.fillRect(pipeX, 0, PIPE_W, SCREEN_H - GROUND_H, TFT_CYAN);
+  tft.fillRect(birdX, (int)birdY - 1, 10, 10, TFT_CYAN);
 
+  // Vẽ ống
+  sprPipe.pushSprite(pipeX, pipeGapY + GAP_H, 0, pipeGapY + GAP_H,
+                     PIPE_W, SCREEN_H - (pipeGapY + GAP_H + GROUND_H));
+  sprPipe.pushSprite(pipeX, 0, 0, 0, PIPE_W, pipeGapY);
+
+  // Vẽ chim
+  sprBird.pushSprite(birdX, birdY, TFT_TRANSPARENT);
+
+  // Vẽ nền đất
+  sprGround.pushSprite(0, SCREEN_H - GROUND_H);
+
+  // Vẽ điểm số
+  tft.fillRect(0, 0, 60, 10, TFT_CYAN);
   tft.setTextColor(TFT_BLACK);
   tft.setCursor(5, 2);
   tft.print("Score: ");
   tft.print(score);
 
+  // Game Over
   if (gameOver) {
-    tft.setCursor(40, 35);
+    tft.fillRect(30, 30, 100, 20, TFT_WHITE);
+    tft.drawRect(30, 30, 100, 20, TFT_BLACK);
+    tft.setCursor(50, 37);
     tft.print("GAME OVER");
   }
 }
