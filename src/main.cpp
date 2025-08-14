@@ -80,10 +80,17 @@ public:
         drawMenu();
     }
 
+    // Sửa callback để sử dụng tham chiếu tới tft từ GameMenu
     static bool tft_output(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t* bitmap) {
-        TFT_eSPI* tft = TJpgDec.getTft();
-        if (x >= tft->width() || y >= tft->height()) return true;
-        tft->pushImage(x, y, w, h, bitmap);
+        // Lấy con trỏ tới đối tượng TFT_eSPI từ biến toàn cục hoặc truyền từ GameMenu
+        // Ở đây, sử dụng tham chiếu tĩnh (cần khai báo biến tĩnh)
+        static TFT_eSPI* staticTft = nullptr;
+        if (staticTft == nullptr) {
+            // Khởi tạo staticTft trong lần đầu gọi (cần gọi từ begin())
+            return false; // Yêu cầu gọi lại sau khi khởi tạo
+        }
+        if (x >= staticTft->width() || y >= staticTft->height()) return true;
+        staticTft->pushImage(x, y, w, h, bitmap);
         return true;
     }
 
@@ -267,6 +274,8 @@ GameMenu game(tft, 23); // Sử dụng GPIO23 cho nút bấm
 
 void setup() {
     Serial.begin(115200); // Khởi tạo Serial để debug
+    // Khởi tạo staticTft trong callback
+    GameMenu::tft_output(0, 0, 0, 0, nullptr); // Gọi lần đầu để khởi tạo staticTft
     game.begin(); // Khởi tạo menu và màn hình
 }
 
