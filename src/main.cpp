@@ -10,8 +10,8 @@ TFT_eSPI tft = TFT_eSPI();
 #define GROUND_H 10
 #define PIPE_W   20
 #define GAP_H    30
-#define GRAVITY  0.5
-#define JUMP_VEL -3.5
+#define GRAVITY  0.25
+#define JUMP_VEL -3.0
 
 // Bird
 float birdY = 40, birdVel = 0;
@@ -30,7 +30,7 @@ TFT_eSprite sprPipe = TFT_eSprite(&tft);
 TFT_eSprite sprGround = TFT_eSprite(&tft);
 
 unsigned long lastFrame = 0;
-const int FRAME_TIME = 25; // ~80 FPS
+const int FRAME_TIME = 30; // ~80 FPS
 
 // Lưu vị trí cũ
 int prevBirdX, prevBirdY;
