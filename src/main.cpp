@@ -1,9 +1,12 @@
-#ifndef GAME_MENU_H
-#define GAME_MENU_H
-
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
 #include <SPI.h>
+
+// ====== INCLUDE tất cả video .h ======
+#include "video01.h"
+#include "video02.h"
+#include "video03.h"
+#include "video04.h"
 
 // ====== Khai báo cấu trúc video ======
 typedef struct _VideoInfo {
@@ -12,18 +15,13 @@ typedef struct _VideoInfo {
     uint16_t num_frames;
 } VideoInfo;
 
-// ====== INCLUDE tất cả video .h ======
-#include "video01.h"
-#include "video02.h"
-#include "video03.h"
-#include "video04.h"
-
 // ====== Mảng video ======
 VideoInfo* videoList[] = {
     &video01, &video02, &video03, &video04
 };
 const uint8_t NUM_VIDEOS = sizeof(videoList) / sizeof(videoList[0]);
 
+// ====== Lớp GameMenu ======
 class GameMenu {
 private:
     TFT_eSPI &tft;
@@ -83,8 +81,8 @@ public:
     }
 
     static bool tft_output(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t* bitmap) {
-        if (x >= TFT_WIDTH || y >= TFT_HEIGHT) return true;
         TFT_eSPI* tft = TJpgDec.getTft();
+        if (x >= tft->width() || y >= tft->height()) return true;
         tft->pushImage(x, y, w, h, bitmap);
         return true;
     }
@@ -133,7 +131,6 @@ private:
                 isPlaying = true;
             }
         } else if (digitalRead(btnPin) == LOW && (millis() - lastButtonPress > 1000)) {
-            // Giữ nút lâu để chuyển đổi lựa chọn
             menuSelection = (menuSelection + 1) % 2;
             drawMenu();
             lastButtonPress = millis();
@@ -169,7 +166,6 @@ private:
 
     void handleFlappyBird(bool buttonPressed) {
         if (buttonPressed && (millis() - lastButtonPress > 1000)) {
-            // Giữ nút lâu để thoát về menu
             currentState = MENU;
             drawMenu();
             return;
@@ -226,17 +222,23 @@ private:
     }
 
     void drawJPEGFrame(const VideoInfo* video, uint16_t frameIndex) {
+        unsigned long startTime = millis();
         uint8_t* jpg_data = (uint8_t*)pgm_read_ptr(&video->frames[frameIndex]);
         uint16_t jpg_size = pgm_read_word(&video->frames_size[frameIndex]);
 
         if (!TJpgDec.drawJpg(0, 0, jpg_data, jpg_size)) {
             Serial.printf("❌ Decode failed on frame %d\n", frameIndex);
         }
+
+        unsigned long decodeTime = millis() - startTime;
+        const int FRAME_DURATION = 33; // ~30 FPS
+        if (decodeTime < FRAME_DURATION) {
+            delay(FRAME_DURATION - decodeTime);
+        }
     }
 
     void handleVideoPlayer(bool buttonPressed) {
         if (buttonPressed && (millis() - lastButtonPress > 1000)) {
-            // Giữ nút lâu để thoát về menu
             currentState = MENU;
             drawMenu();
             return;
@@ -259,4 +261,15 @@ private:
     }
 };
 
-#endif
+// ====== Khởi tạo đối tượng ======
+TFT_eSPI tft = TFT_eSPI();
+GameMenu game(tft, 23); // Sử dụng GPIO23 cho nút bấm
+
+void setup() {
+    Serial.begin(115200); // Khởi tạo Serial để debug
+    game.begin(); // Khởi tạo menu và màn hình
+}
+
+void loop() {
+    game.update(); // Cập nhật trạng thái menu/game/video
+}
