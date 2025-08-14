@@ -11,6 +11,10 @@
 #define TFT_MOSI 18
 #define TFT_SCLK 5
 
+#define LOAD_GLCD
+#define LOAD_FONT2
+#define SMOOTH_FONT
+
 #define TFT_RGB_ORDER TFT_BGR     // nếu màu sai, thử đổi sang TFT_RGB
 #define TFT_INVERSION_ON          // hoặc _OFF nếu bị âm
 
