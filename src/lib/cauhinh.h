@@ -4,12 +4,12 @@
 #define TFT_WIDTH  80
 #define TFT_HEIGHT 160
 
-#define TFT_CS   5
-#define TFT_DC   1
-#define TFT_RST  8
+#define TFT_CS   22
+#define TFT_DC   21
+#define TFT_RST  19
 
-#define TFT_MOSI 3
-#define TFT_SCLK 4
+#define TFT_MOSI 18
+#define TFT_SCLK 5
 
 #define LOAD_GLCD
 #define LOAD_FONT2
