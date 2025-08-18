@@ -11,7 +11,7 @@
 TFT_eSPI tft = TFT_eSPI();
 
 // ==== Buttons (change if conflict with TFT wiring) ====
-#define BTN_SELECT 5    // chọn mục tiêu (chuyển AP / client)
+#define BTN_SELECT 15    // chọn mục tiêu (chuyển AP / client)
 #define BTN_ATTACK 23   // nhấn nhanh: tấn công, giữ >1500ms: hủy tấn công
 
 // ==== UI layout ====
