@@ -8,7 +8,7 @@
 TFT_eSPI tft = TFT_eSPI(); 
 
 // ==================== Nút nhấn ====================
-#define BTN_SELECT 5   // chọn mục tiêu
+#define BTN_SELECT 15   // chọn mục tiêu
 #define BTN_ATTACK 23  // bắt đầu/hủy tấn công
 
 // ==================== Cấu trúc Client ====================
