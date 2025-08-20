@@ -11,7 +11,7 @@
 #include "video11.h"
 #include "video12.h"
 #include "video13.h"
-#include "video14.h"
+// Loại bỏ "video14.h" vì không có trong include gốc và gây lỗi
 
 // Định nghĩa chân nút bấm
 #define BUTTON_SELECT 0   // Chuyển đổi tùy chọn menu
@@ -35,7 +35,15 @@ typedef struct _VideoInfo {
   uint16_t num_frames;
 } VideoInfo;
 
-VideoInfo* videoList[] = {&video01, &video05, &video06, &video10, &video11, &video12, &video13, &video14};
+VideoInfo* videoList[] = {
+  &video01,
+  &video05,
+  &video06,
+  &video10,
+  &video11,
+  &video12,
+  &video13
+};
 const uint8_t NUM_VIDEOS = sizeof(videoList) / sizeof(videoList[0]);
 
 bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
@@ -53,25 +61,27 @@ void drawJPEGFrame(const VideoInfo* video, uint16_t frameIndex) {
 }
 
 void runVideoPlayer() {
-  for (uint8_t v = 0; v < NUM_VIDEOS; v++) {
-    VideoInfo* currentVideo = videoList[v];
-    for (uint16_t f = 0; f < currentVideo->num_frames; f++) {
-      if (digitalRead(BUTTON_CONFIRM) == LOW) {
-        if (millis() - confirmPressTime > debounceDelay) {
-          confirmPressTime = millis();
+  while (projectRunning) { // Giữ nguyên logic chạy tuần tự, thêm thoát
+    for (uint8_t v = 0; v < NUM_VIDEOS; v++) {
+      VideoInfo* currentVideo = videoList[v];
+      for (uint16_t f = 0; f < currentVideo->num_frames; f++) {
+        if (digitalRead(BUTTON_CONFIRM) == LOW) {
+          if (millis() - confirmPressTime > debounceDelay) {
+            confirmPressTime = millis();
+          }
+          if (millis() - confirmPressTime >= holdToExit) {
+            projectRunning = false;
+            tft.fillScreen(TFT_BLACK);
+            return;
+          }
+        } else {
+          confirmPressTime = 0;
         }
-        if (millis() - confirmPressTime >= holdToExit) {
-          projectRunning = false;
-          tft.fillScreen(TFT_BLACK);
-          return;
-        }
-      } else {
-        confirmPressTime = 0;
+        drawJPEGFrame(currentVideo, f);
+        delay(20);  // Giữ nguyên thời gian giữa các frame
       }
-      drawJPEGFrame(currentVideo, f);
-      delay(20);
+      delay(300);  // Giữ nguyên delay giữa các video
     }
-    delay(300);
   }
 }
 
@@ -440,7 +450,7 @@ void displayMenu() {
 void setup() {
   Serial.begin(115200);
   tft.begin();
-  tft.setRotation(1);
+  tft.setRotation(3);  // Đổi về giống code gốc
   tft.fillScreen(TFT_BLACK);
 
   pinMode(BUTTON_SELECT, INPUT_PULLUP);
