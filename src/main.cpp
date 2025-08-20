@@ -1,11 +1,11 @@
 #include <TFT_eSPI.h>
 #include <SPI.h>
 
-TFT_eSPI tft = TFT_eSPI( );
+TFT_eSPI tft = TFT_eSPI();  // dùng config trong User_Setup.h
 
 // Nút điều khiển
-#define BTN_LEFT  0
-#define BTN_RIGHT 2
+#define BTN_LEFT  20
+#define BTN_RIGHT 21
 
 // Paddle
 int paddleX = 60;
@@ -36,6 +36,15 @@ struct PowerUp {
   bool active;
 };
 PowerUp powerups[5];  // tối đa 5 vật phẩm rơi cùng lúc
+
+// --- Hàm đọc nút có debounce ---
+bool readButton(int pin) {
+  if (!digitalRead(pin)) {    // nhấn = LOW (vì INPUT_PULLUP)
+    delay(20);                // chống dội 20ms
+    if (!digitalRead(pin)) return true;
+  }
+  return false;
+}
 
 void spawnPowerUp(int bx, int by) {
   for (int i = 0; i < 5; i++) {
@@ -156,7 +165,7 @@ void setup() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextSize(1);
 
-  randomSeed(analogRead(0)); // để random powerup
+  randomSeed(analogRead(0));
   newGame();
 }
 
@@ -165,8 +174,8 @@ void loop() {
   tft.fillScreen(TFT_BLACK);
 
   // Điều khiển paddle
-  if (!digitalRead(BTN_LEFT) && paddleX > 0) paddleX -= 2;
-  if (!digitalRead(BTN_RIGHT) && paddleX < (160 - paddleW)) paddleX += 2;
+  if (readButton(BTN_LEFT) && paddleX > 0) paddleX -= 2;
+  if (readButton(BTN_RIGHT) && paddleX < (160 - paddleW)) paddleX += 2;
 
   // Cập nhật bóng
   ballX += ballDX;
