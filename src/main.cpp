@@ -1,159 +1,163 @@
 #include <TFT_eSPI.h>
 #include <SPI.h>
 
-TFT_eSPI tft = TFT_eSPI();  // dùng config trong User_Setup.h
+TFT_eSPI tft = TFT_eSPI();
 
-// Nút điều khiển
+// Nút bấm
 #define BTN_LEFT  20
 #define BTN_RIGHT 21
 
 // Paddle
 int paddleX = 60;
+int paddleY = 75;
 int paddleW = 30;
-const int paddleY = 70;
-const int paddleH = 5;
+int paddleH = 5;
+int prevPaddleX = paddleX;
 
-// Ball
-int ballX, ballY;
-int ballDX, ballDY;
-const int ballR = 3;
+// Bóng
+int ballX = 80, ballY = 40;
+int ballSize = 4;
+int ballDX = 1, ballDY = 1;
+int prevBallX = ballX, prevBallY = ballY;
 
-// Blocks
-const int rowsMax = 5, cols = 6;
-bool blocks[rowsMax][cols];
-const int blockW = 25, blockH = 8;
+// Brick
+const int brickRowsMax = 6;
+const int brickCols = 6;
+const int brickW = 24;
+const int brickH = 8;
+bool bricks[brickRowsMax][brickCols];
 
-// Game state
+// Game info
 int score = 0;
-int lives = 3;
 int level = 1;
-int speedDelay = 15;
+int brickRows = 3;   // số hàng ban đầu
+int lives = 3;
+bool isGameOver = false;
 
-// Power-ups
-struct PowerUp {
-  int x, y;
-  int type;    // 1=to paddle, 2=thu nhỏ paddle, 3=tăng tốc, 4=thêm mạng
-  bool active;
-};
-PowerUp powerups[5];  // tối đa 5 vật phẩm rơi cùng lúc
+unsigned long lastBtnPress = 0; // đơn giản debounce cho reset
 
-// --- Hàm đọc nút có debounce ---
-bool readButton(int pin) {
-  if (!digitalRead(pin)) {    // nhấn = LOW (vì INPUT_PULLUP)
-    delay(20);                // chống dội 20ms
-    if (!digitalRead(pin)) return true;
-  }
-  return false;
+// --- Hàm khai báo ---
+void drawPaddle(int x, int y, uint16_t color) {
+  tft.fillRect(x, y, paddleW, paddleH, color);
 }
 
-void spawnPowerUp(int bx, int by) {
-  for (int i = 0; i < 5; i++) {
-    if (!powerups[i].active) {
-      powerups[i].x = bx;
-      powerups[i].y = by;
-      powerups[i].type = random(1, 5); // 1..4
-      powerups[i].active = true;
-      break;
-    }
-  }
+void drawBall(int x, int y, uint16_t color) {
+  tft.fillRect(x, y, ballSize, ballSize, color);
 }
 
-void drawPowerUps() {
-  for (int i = 0; i < 5; i++) {
-    if (powerups[i].active) {
-      uint16_t color;
-      switch (powerups[i].type) {
-        case 1: color = TFT_GREEN; break;
-        case 2: color = TFT_ORANGE; break;
-        case 3: color = TFT_BLUE; break;
-        case 4: color = TFT_MAGENTA; break;
-      }
-      tft.fillRect(powerups[i].x, powerups[i].y, 8, 8, color);
-    }
-  }
+void drawBrick(int col, int row, uint16_t color) {
+  int x = col * brickW;
+  int y = row * brickH;
+  tft.fillRect(x + 1, y + 1, brickW - 2, brickH - 2, color);
 }
 
-void updatePowerUps() {
-  for (int i = 0; i < 5; i++) {
-    if (powerups[i].active) {
-      powerups[i].y += 1; // rơi xuống
-      if (powerups[i].y >= paddleY && 
-          powerups[i].x >= paddleX && powerups[i].x <= paddleX + paddleW) {
-        // Paddle bắt được
-        switch (powerups[i].type) {
-          case 1: paddleW += 10; if (paddleW > 60) paddleW = 60; break;
-          case 2: paddleW -= 8; if (paddleW < 15) paddleW = 15; break;
-          case 3: if (speedDelay > 5) speedDelay -= 3; break;
-          case 4: lives++; break;
-        }
-        powerups[i].active = false;
-      }
-      if (powerups[i].y > 80) powerups[i].active = false; // rơi ra ngoài
-    }
-  }
-}
-
-void drawPaddle() {
-  tft.fillRect(paddleX, paddleY, paddleW, paddleH, TFT_WHITE);
-}
-
-void drawBall() {
-  tft.fillCircle(ballX, ballY, ballR, TFT_YELLOW);
-}
-
-void drawBlocks() {
-  for (int r = 0; r < rowsMax; r++) {
-    for (int c = 0; c < cols; c++) {
-      if (blocks[r][c]) {
-        int bx = c * blockW + 5;
-        int by = r * (blockH + 2) + 10;
-        uint16_t color = (r % 2 == 0) ? TFT_RED : TFT_CYAN;
-        tft.fillRect(bx, by, blockW - 2, blockH, color);
-      }
-    }
-  }
-}
-
-void drawHUD() {
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+void showInfo() {
+  // xóa thanh trên (chỉ vùng HUD)
+  tft.fillRect(0, 0, 160, 8, TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(1);
   tft.setCursor(2, 0);
-  tft.printf("Lv:%d  Sc:%d  L:%d", level, score, lives);
+  tft.print("Sc:");
+  tft.print(score);
+  tft.setCursor(70, 0);
+  tft.print("Lv:");
+  tft.print(level);
+  tft.setCursor(110, 0);
+  tft.print("L:");
+  tft.print(lives);
 }
 
-void initBlocks() {
-  for (int r = 0; r < level + 1 && r < rowsMax; r++) {
-    for (int c = 0; c < cols; c++) {
-      blocks[r][c] = true;
-    }
-  }
-}
-
-bool allBlocksCleared() {
-  for (int r = 0; r < rowsMax; r++) {
-    for (int c = 0; c < cols; c++) {
-      if (blocks[r][c]) return false;
+bool allBricksCleared() {
+  for (int r = 0; r < brickRows; r++) {
+    for (int c = 0; c < brickCols; c++) {
+      if (bricks[r][c]) return false;
     }
   }
   return true;
 }
 
-void resetBallPaddle() {
+void resetBallPaddlePreserveBricks() {
+  // Giữ lại bricks (dùng khi mất mạng nhưng chưa hết mạng)
+  // Xóa vết cũ trên màn hiển thị
+  tft.fillRect(prevBallX, prevBallY, ballSize, ballSize, TFT_BLACK);
+  tft.fillRect(prevPaddleX, paddleY, paddleW, paddleH, TFT_BLACK);
+
   paddleX = 60;
-  paddleW = 30;
+  prevPaddleX = paddleX;
+  drawPaddle(paddleX, paddleY, TFT_WHITE);
+
   ballX = 80;
-  ballY = 50;
-  ballDX = (random(0, 2) == 0) ? 1 : -1;
-  ballDY = -1;
-  for (int i = 0; i < 5; i++) powerups[i].active = false;
+  ballY = 40;
+  // Ball tốc độ tùy level
+  int sp = 1 + (level - 1) / 2;
+  ballDX = (random(0, 2) == 0) ? sp : -sp;
+  ballDY = -sp;
+  prevBallX = ballX; prevBallY = ballY;
+  drawBall(ballX, ballY, TFT_YELLOW);
+
+  showInfo();
 }
 
-void newGame() {
-  score = 0;
-  lives = 3;
-  level = 1;
-  speedDelay = 15;
-  initBlocks();
-  resetBallPaddle();
+void resetGameFull() {
+  // Reset toàn bộ (khi start game hoặc after Game Over)
+  tft.fillScreen(TFT_BLACK);
+
+  paddleX = 60;
+  paddleY = 75;
+  prevPaddleX = paddleX;
+  drawPaddle(paddleX, paddleY, TFT_WHITE);
+
+  ballX = 80;
+  ballY = 40;
+  ballDX = 1;
+  ballDY = 1;
+  prevBallX = ballX; prevBallY = ballY;
+  drawBall(ballX, ballY, TFT_YELLOW);
+
+  // Reset bricks theo số hàng hiện tại
+  for (int r = 0; r < brickRowsMax; r++) {
+    for (int c = 0; c < brickCols; c++) {
+      if (r < brickRows) {
+        bricks[r][c] = true;
+        drawBrick(c, r, (r % 2 == 0) ? TFT_GREEN : TFT_CYAN);
+      } else {
+        bricks[r][c] = false;
+      }
+    }
+  }
+
+  showInfo();
+}
+
+void checkBrickCollision() {
+  // Dò col,row theo tâm bóng (đơn giản)
+  int cx = ballX + ballSize/2;
+  int cy = ballY + ballSize/2;
+  int row = cy / brickH;
+  int col = cx / brickW;
+
+  if (row >= 0 && row < brickRows && col >= 0 && col < brickCols) {
+    if (bricks[row][col]) {
+      bricks[row][col] = false;
+      drawBrick(col, row, TFT_BLACK); // Xóa brick
+      ballDY = -ballDY;
+      score += 10;
+      showInfo();
+
+      if (allBricksCleared()) {
+        // qua màn
+        level++;
+        brickRows = min(brickRows + 1, brickRowsMax);
+        // tăng tốc bóng 1 bậc
+        int sp = 1 + (level - 1) / 2;
+        if (ballDX > 0) ballDX = sp; else ballDX = -sp;
+        ballDY = (ballDY > 0) ? sp : -sp;
+
+        delay(300);
+        resetGameFull();
+      }
+    }
+  }
 }
 
 void setup() {
@@ -161,92 +165,118 @@ void setup() {
   pinMode(BTN_RIGHT, INPUT_PULLUP);
 
   tft.init();
-  tft.setRotation(3);
+  tft.setRotation(3);   // xoay ngang
   tft.fillScreen(TFT_BLACK);
-  tft.setTextSize(1);
 
   randomSeed(analogRead(0));
-  newGame();
+
+  // Khởi tạo game
+  score = 0;
+  level = 1;
+  brickRows = 3;
+  lives = 3;
+  isGameOver = false;
+
+  resetGameFull();
 }
 
 void loop() {
-  // Xóa màn hình
-  tft.fillScreen(TFT_BLACK);
+  // Nếu đang ở trạng thái Game Over -> chờ nhấn nút để restart toàn bộ
+  if (isGameOver) {
+    // chờ nhấn BTN_LEFT hoặc BTN_RIGHT để restart (có debounce nhỏ)
+    if (digitalRead(BTN_LEFT) == LOW || digitalRead(BTN_RIGHT) == LOW) {
+      if (millis() - lastBtnPress > 200) {
+        // restart toàn bộ game
+        score = 0;
+        level = 1;
+        brickRows = 3;
+        lives = 3;
+        isGameOver = false;
+        resetGameFull();
+      }
+      lastBtnPress = millis();
+    }
+    return;
+  }
 
-  // Điều khiển paddle
-  if (readButton(BTN_LEFT) && paddleX > 0) paddleX -= 2;
-  if (readButton(BTN_RIGHT) && paddleX < (160 - paddleW)) paddleX += 2;
+  // ---- Paddle input ----
+  bool paddleMoved = false;
+  if (digitalRead(BTN_LEFT) == LOW && paddleX > 0) {
+    prevPaddleX = paddleX;
+    paddleX -= 2;
+    paddleMoved = true;
+  }
+  if (digitalRead(BTN_RIGHT) == LOW && paddleX < 160 - paddleW) {
+    prevPaddleX = paddleX;
+    paddleX += 2;
+    paddleMoved = true;
+  }
 
-  // Cập nhật bóng
+  // Xóa và vẽ paddle chỉ khi di chuyển
+  if (paddleMoved) {
+    tft.fillRect(prevPaddleX, paddleY, paddleW, paddleH, TFT_BLACK);
+    drawPaddle(paddleX, paddleY, TFT_WHITE);
+  }
+
+  // ---- Ball update ----
+  prevBallX = ballX; prevBallY = ballY;
   ballX += ballDX;
   ballY += ballDY;
 
-  // Va chạm tường
-  if (ballX - ballR <= 0 || ballX + ballR >= 160) ballDX = -ballDX;
-  if (ballY - ballR <= 8) ballDY = -ballDY;
+  // Va chạm tường trái/phải
+  if (ballX <= 0) {
+    ballX = 0;
+    ballDX = -ballDX;
+  } else if (ballX >= 160 - ballSize) {
+    ballX = 160 - ballSize;
+    ballDX = -ballDX;
+  }
+  // Va chạm trần
+  if (ballY <= 8) { // giữ 8px để không chồng lên HUD
+    ballY = 8;
+    ballDY = -ballDY;
+  }
 
   // Va chạm paddle
-  if (ballY + ballR >= paddleY && ballX >= paddleX && ballX <= paddleX + paddleW) {
-    ballDY = -ballDY;
-    ballY = paddleY - ballR;
+  if (ballY + ballSize >= paddleY && ballX + ballSize >= paddleX && ballX <= paddleX + paddleW) {
+    ballDY = -abs(ballDY); // bật lên
+    ballY = paddleY - ballSize;
+    // khi chạm paddle có thể thay đổi hướng ngang dựa vào phần gặp paddle
+    int hitPos = (ballX + ballSize/2) - (paddleX + paddleW/2); // -.....+
+    if (hitPos < 0) ballDX = max(-3, ballDX -  (abs(hitPos)/5));
+    else ballDX = min(3, ballDX + (abs(hitPos)/5));
   }
 
-  // Va chạm blocks
-  for (int r = 0; r < rowsMax; r++) {
-    for (int c = 0; c < cols; c++) {
-      if (blocks[r][c]) {
-        int bx = c * blockW + 5;
-        int by = r * (blockH + 2) + 10;
-        if (ballX >= bx && ballX <= bx + blockW &&
-            ballY >= by && ballY <= by + blockH) {
-          blocks[r][c] = false;
-          ballDY = -ballDY;
-          score += 10;
-          if (random(0, 100) < 20) { // 20% ra powerup
-            spawnPowerUp(bx + blockW / 2, by);
-          }
-        }
-      }
-    }
-  }
+  // Va chạm brick
+  checkBrickCollision();
 
-  // Nếu bóng rơi xuống đáy
-  if (ballY > 80) {
+  // Nếu rơi xuống dưới -> mất mạng
+  if (ballY >= 80 - ballSize) {
     lives--;
+    showInfo();
     if (lives > 0) {
-      resetBallPaddle();
+      // reset ball & paddle, giữ bricks + score + level
+      delay(200);
+      resetBallPaddlePreserveBricks();
     } else {
       // Game Over
-      tft.fillScreen(TFT_BLACK);
-      tft.setTextColor(TFT_RED, TFT_BLACK);
-      tft.setTextSize(2);
-      tft.setCursor(30, 30);
-      tft.println("GAME OVER");
-      tft.setTextSize(1);
-      tft.setCursor(20, 60);
-      tft.printf("Score: %d", score);
-      delay(3000);
-      newGame();
+      isGameOver = true;
+      // Hiện hộp Game Over
+      tft.fillRect(30, 28, 100, 24, TFT_WHITE);
+      tft.drawRect(30, 28, 100, 24, TFT_BLACK);
+      tft.setTextColor(TFT_BLACK, TFT_WHITE);
+      tft.setCursor(45, 34);
+      tft.print("GAME OVER");
+      tft.setCursor(38, 44);
+      tft.print("Press Btn to restart");
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      return; // dừng update tiếp
     }
   }
 
-  // Nếu qua màn
-  if (allBlocksCleared()) {
-    level++;
-    if (speedDelay > 5) speedDelay -= 2;
-    initBlocks();
-    resetBallPaddle();
-  }
+  // Xoá bóng cũ, vẽ bóng mới
+  tft.fillRect(prevBallX, prevBallY, ballSize, ballSize, TFT_BLACK);
+  drawBall(ballX, ballY, TFT_YELLOW);
 
-  // Vẽ
-  drawBlocks();
-  drawPaddle();
-  drawBall();
-  drawHUD();
-  drawPowerUps();
-
-  // Update powerup
-  updatePowerUps();
-
-  delay(speedDelay);
+  delay(10); // điều hòa tốc độ loop
 }
