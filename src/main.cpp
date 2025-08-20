@@ -3,7 +3,7 @@
 #include <TJpg_Decoder.h>
 #include <SPI.h>
 
-// Include các file video (dự án 1)
+// Include các file video
 #include "video01.h"
 #include "video05.h"
 #include "video06.h"
@@ -56,7 +56,6 @@ void runVideoPlayer() {
   for (uint8_t v = 0; v < NUM_VIDEOS; v++) {
     VideoInfo* currentVideo = videoList[v];
     for (uint16_t f = 0; f < currentVideo->num_frames; f++) {
-      // Kiểm tra thoát
       if (digitalRead(BUTTON_CONFIRM) == LOW) {
         if (millis() - confirmPressTime > debounceDelay) {
           confirmPressTime = millis();
@@ -67,7 +66,7 @@ void runVideoPlayer() {
           return;
         }
       } else {
-        confirmPressTime = 0; // Reset khi thả nút
+        confirmPressTime = 0;
       }
       drawJPEGFrame(currentVideo, f);
       delay(20);
@@ -138,7 +137,6 @@ void runFlappyBird() {
   if (now - lastFrameFlappy < FRAME_TIME) return;
   lastFrameFlappy = now;
 
-  // Kiểm tra thoát
   if (digitalRead(BUTTON_CONFIRM) == LOW) {
     if (millis() - confirmPressTime > debounceDelay) {
       confirmPressTime = millis();
@@ -149,17 +147,15 @@ void runFlappyBird() {
       return;
     }
   } else {
-    confirmPressTime = 0; // Reset khi thả nút
+    confirmPressTime = 0;
   }
 
-  // Input
   static unsigned long lastBtn = 0;
   if (digitalRead(BUTTON_CONFIRM) == LOW && millis() - lastBtn > 150) {
     birdVel = JUMP_VEL;
     lastBtn = millis();
   }
 
-  // Update
   if (!gameOverFlappy) {
     birdVel += GRAVITY;
     birdY += birdVel;
@@ -181,7 +177,6 @@ void runFlappyBird() {
     }
   }
 
-  // Clear
   tft.fillRect(prevBirdX, prevBirdY, 8, 8, TFT_CYAN);
   tft.fillRect(prevPipeX, 0, PIPE_W, prevPipeGapY, TFT_CYAN);
   tft.fillRect(prevPipeX, prevPipeGapY + GAP_H, PIPE_W, SCREEN_H - (prevPipeGapY + GAP_H + GROUND_H), TFT_CYAN);
@@ -189,7 +184,6 @@ void runFlappyBird() {
     tft.fillRect(30, 30, 100, 20, TFT_CYAN);
   }
 
-  // Draw
   sprPipe.pushSprite(pipeX, 0, 0, 0, PIPE_W, pipeGapY);
   sprPipe.pushSprite(pipeX, pipeGapY + GAP_H, 0, pipeGapY + GAP_H, PIPE_W, SCREEN_H - (prevPipeGapY + GAP_H + GROUND_H));
   sprBird.pushSprite(birdX, birdY, TFT_TRANSPARENT);
@@ -338,7 +332,6 @@ void newBreakoutGame() {
 }
 
 void runBreakout() {
-  // Kiểm tra thoát
   if (digitalRead(BUTTON_CONFIRM) == LOW) {
     if (millis() - confirmPressTime > debounceDelay) {
       confirmPressTime = millis();
@@ -349,7 +342,7 @@ void runBreakout() {
       return;
     }
   } else {
-    confirmPressTime = 0; // Reset khi thả nút
+    confirmPressTime = 0;
   }
 
   tft.fillScreen(TFT_BLACK);
