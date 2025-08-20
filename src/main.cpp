@@ -161,7 +161,7 @@ void setup() {
   pinMode(BTN_RIGHT, INPUT_PULLUP);
 
   tft.init();
-  tft.setRotation(1);
+  tft.setRotation(3);
   tft.fillScreen(TFT_BLACK);
   tft.setTextSize(1);
 
