@@ -245,7 +245,7 @@ void setup() {
   randomSeed((uint32_t)analogRead(A0) ^ micros());
 
   tft.init();
-  tft.setRotation(1); // ngang: 160x80
+  tft.setRotation(3); // ngang: 160x80
   tft.fillScreen(C_BG);
   tft.setSwapBytes(true);
 
