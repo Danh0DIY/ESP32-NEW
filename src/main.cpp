@@ -61,39 +61,6 @@ float prevBallX[MAX_BALLS], prevBallY[MAX_BALLS];
 float prevPowerX[MAX_POWERUPS], prevPowerY[MAX_POWERUPS];
 
 // ------------------ Setup -----------------------
-void setup() {
-  pinMode(BTN_LEFT, INPUT_PULLUP);
-  pinMode(BTN_RIGHT, INPUT_PULLUP);
-
-  tft.init();
-  tft.setRotation(3);
-  tft.fillScreen(TFT_BLACK);
-
-  randomSeed(analogRead(0));
-
-  resetGameFull();
-}
-
-// ------------------ Loop ------------------------
-void loop() {
-  if (isGameOver) {
-    if ((digitalRead(BTN_LEFT) == LOW || digitalRead(BTN_RIGHT) == LOW) && millis() - lastBtnPress > 200) {
-      score = 0; level = 1; brickRows = 3; lives = 3; isGameOver = false;
-      resetGameFull();
-      lastBtnPress = millis();
-    }
-    return;
-  }
-
-  handlePaddle();
-  updateBalls();
-  updatePowerUps();
-  drawHUD();
-
-  delay(10);
-}
-
-// ------------------ Paddle ----------------------
 void handlePaddle() {
   prevPaddleX = paddleX;
   if (digitalRead(BTN_LEFT) == LOW && paddleX > 0) paddleX -= paddleSpeed;
@@ -309,3 +276,37 @@ void showGameOver(){
   tft.setCursor(38,44); tft.print("Press Btn to restart");
   tft.setTextColor(TFT_WHITE,TFT_BLACK);
 }
+
+void setup() {
+  pinMode(BTN_LEFT, INPUT_PULLUP);
+  pinMode(BTN_RIGHT, INPUT_PULLUP);
+
+  tft.init();
+  tft.setRotation(3);
+  tft.fillScreen(TFT_BLACK);
+
+  randomSeed(analogRead(0));
+
+  resetGameFull();
+}
+
+// ------------------ Loop ------------------------
+void loop() {
+  if (isGameOver) {
+    if ((digitalRead(BTN_LEFT) == LOW || digitalRead(BTN_RIGHT) == LOW) && millis() - lastBtnPress > 200) {
+      score = 0; level = 1; brickRows = 3; lives = 3; isGameOver = false;
+      resetGameFull();
+      lastBtnPress = millis();
+    }
+    return;
+  }
+
+  handlePaddle();
+  updateBalls();
+  updatePowerUps();
+  drawHUD();
+
+  delay(10);
+}
+
+// ------------------ Paddle ----------------------
