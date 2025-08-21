@@ -41,13 +41,29 @@ int score = 0, level = 1, lives = 3;
 bool isGameOver = false;
 unsigned long lastBtnPress = 0;
 float ballSpeed = BALL_SPEED;
-
-// ------------------ Previous Positions (Static Arrays) ------------------
 int prevPaddleX = paddleX;
 float prevBallX[MAX_BALLS], prevBallY[MAX_BALLS];
 float prevPowerX[MAX_POWERUPS], prevPowerY[MAX_POWERUPS];
 
-// ------------------ Setup -----------------------
+// ------------------ Function Prototypes ------------------
+void setup();
+void loop();
+void handlePaddle();
+void drawPaddle();
+void initBall(int idx, float x, float y, float vx, float vy);
+void updateBalls();
+void drawBall(int idx);
+bool allBricksCleared();
+void checkGameOver();
+void spawnPowerUp(float x, float y);
+void updatePowerUps();
+void activatePowerUp(int type);
+void resetGameFull();
+void resetBallPaddlePreserveBricks();
+void drawHUD();
+void showGameOver();
+
+// ------------------ Implementation ------------------
 void setup() {
   pinMode(BTN_LEFT, INPUT_PULLUP);
   pinMode(BTN_RIGHT, INPUT_PULLUP);
@@ -58,11 +74,10 @@ void setup() {
   resetGameFull();
 }
 
-// ------------------ Main Loop (Time-based) ------------------
 unsigned long lastUpdate = 0;
 void loop() {
   unsigned long now = millis();
-  if (now - lastUpdate < 10) return; // Target ~100 FPS
+  if (now - lastUpdate < 10) return;
   lastUpdate = now;
 
   if (isGameOver) {
@@ -80,10 +95,9 @@ void loop() {
   drawHUD();
 }
 
-// ------------------ Paddle ----------------------
 void handlePaddle() {
   int newPaddleX = paddleX;
-  if (millis() - lastBtnPress > 50) { // Debounce 50ms
+  if (millis() - lastBtnPress > 50) {
     if (digitalRead(BTN_LEFT) == LOW && paddleX > 0) newPaddleX -= PADDLE_SPEED;
     if (digitalRead(BTN_RIGHT) == LOW && paddleX + paddleW < 160) newPaddleX += PADDLE_SPEED;
     lastBtnPress = millis();
@@ -91,7 +105,7 @@ void handlePaddle() {
 
   if (paddlePowerEnd > 0 && millis() > paddlePowerEnd) {
     paddleW = 30;
-    ballSpeed = BALL_SPEED; // Reset ball speed
+    ballSpeed = BALL_SPEED;
     paddlePowerEnd = 0;
   }
 
@@ -106,7 +120,6 @@ void drawPaddle() {
   tft.fillRect(paddleX, PADDLE_Y, paddleW, PADDLE_H, TFT_WHITE);
 }
 
-// ------------------ Ball ----------------------
 void initBall(int idx, float x, float y, float vx, float vy) {
   balls[idx] = {x, y, vx, vy, true};
   prevBallX[idx] = x; prevBallY[idx] = y;
@@ -115,17 +128,14 @@ void initBall(int idx, float x, float y, float vx, float vy) {
 void updateBalls() {
   for (int i = 0; i < MAX_BALLS; i++) {
     if (!balls[i].active) continue;
-
     tft.fillRect(prevBallX[i], prevBallY[i], 4, 4, TFT_BLACK);
     balls[i].x += balls[i].vx;
     balls[i].y += balls[i].vy;
 
-    // Wall collision
     if (balls[i].x <= 0) { balls[i].x = 0; balls[i].vx = fabs(balls[i].vx); }
     if (balls[i].x + 4 >= 160) { balls[i].x = 156; balls[i].vx = -fabs(balls[i].vx); }
     if (balls[i].y <= 8) { balls[i].y = 8; balls[i].vy = -balls[i].vy; }
 
-    // Paddle collision
     if (balls[i].y + 4 >= PADDLE_Y && balls[i].x + 4 >= paddleX && balls[i].x <= paddleX + paddleW) {
       balls[i].vy = -fabs(balls[i].vy);
       float hitPos = (balls[i].x + 2) - (paddleX + paddleW / 2);
@@ -138,7 +148,6 @@ void updateBalls() {
       balls[i].y = PADDLE_Y - 4;
     }
 
-    // Brick collision
     int row = (int)(balls[i].y / BRICK_H);
     int col = (int)(balls[i].x / BRICK_W);
     if (row >= 0 && row < brickRows && col >= 0 && col < BRICK_COLS && bricks[row][col]) {
@@ -150,7 +159,6 @@ void updateBalls() {
       if (allBricksCleared()) { level++; brickRows = min(brickRows + 1, BRICK_ROWS_MAX); delay(300); resetGameFull(); return; }
     }
 
-    // Game over check
     if (balls[i].y + 4 >= 80) {
       balls[i].active = false;
       checkGameOver();
@@ -182,7 +190,6 @@ void checkGameOver() {
   else showGameOver();
 }
 
-// ------------------ Power-up --------------------
 void spawnPowerUp(float x, float y) {
   for (int i = 0; i < MAX_POWERUPS; i++) {
     if (!powerups[i].active) {
@@ -199,17 +206,14 @@ void updatePowerUps() {
     tft.fillRect(prevPowerX[i], prevPowerY[i], 6, 6, TFT_BLACK);
     powerups[i].y += 1;
 
-    // Paddle catch
     if (powerups[i].y + 6 >= PADDLE_Y && powerups[i].x + 3 >= paddleX && powerups[i].x - 3 <= paddleX + paddleW) {
       activatePowerUp(powerups[i].type);
       powerups[i].active = false;
       continue;
     }
 
-    // Fall off
     if (powerups[i].y > 80) powerups[i].active = false;
 
-    // Draw power-up
     tft.fillRect(powerups[i].x, powerups[i].y, 6, 6, (powerups[i].type == 0 ? TFT_BLUE : powerups[i].type == 1 ? TFT_YELLOW : powerups[i].type == 2 ? TFT_GREEN : TFT_RED));
     prevPowerX[i] = powerups[i].x;
     prevPowerY[i] = powerups[i].y;
@@ -239,7 +243,6 @@ void activatePowerUp(int type) {
   }
 }
 
-// ------------------ Reset / Game Over ------------------
 void resetGameFull() {
   tft.fillScreen(TFT_BLACK);
   paddleX = 60; paddleW = 30; drawPaddle();
