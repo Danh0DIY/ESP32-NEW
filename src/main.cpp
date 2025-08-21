@@ -147,7 +147,8 @@ void updateBalls() {
   }
 }
 
-void drawBall(int idx){ tft.fillRect(balls[idx].x,balls[idx].y,4,4,TFT_RED); }
+void drawBall(int idx { tft.fillRect(balls[idx].x,balls[idx].y,4,4,TFT_RED); 
+}
 
 bool allBricksCleared(){
   for (int r=0;r<brickRows;r++) for(int c=0;c<brickCols;c++) if (bricks[r][c]) return false;
