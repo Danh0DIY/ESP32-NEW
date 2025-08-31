@@ -1,11 +1,20 @@
-#include <Arduino.h>
+#include "USB.h"
+#include "USBHIDMouse.h"
+
+USBHIDMouse Mouse;
+const int buttonPin = 0; // chân nút bấm (GPIO0)
 
 void setup() {
-  Serial.begin(115200);
+  pinMode(buttonPin, INPUT_PULLUP);
+  USB.begin();
+  Mouse.begin();
+  delay(2000);
 }
 
 void loop() {
-  int hallValue = hallRead();  // Đọc giá trị từ cảm biến Hall tích hợp
-  Serial.println(hallValue);
-  delay(500);  // Đọc mỗi 0.5 giây
+  if (digitalRead(buttonPin) == LOW) { // nhấn nút
+    Mouse.moveTo(980, 2200);
+    Mouse.click(MOUSE_LEFT);
+    delay(500); // chống dội nút
+  }
 }
